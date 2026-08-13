@@ -361,7 +361,7 @@ function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTr
   );
 }
 
-// Sub-Component: Full Admin View
+// Sub-Component: Full Admin View with Edit, Delete, and Re-ordering Stops
 function AdminView({ routes, fetchRoutes }) {
   const [routeName, setRouteName] = useState('');
   const [busNumber, setBusNumber] = useState('');
@@ -425,7 +425,7 @@ function AdminView({ routes, fetchRoutes }) {
     setEditingRouteId(route.id);
     setEditRouteName(route.route_name);
     setEditBusNumber(route.bus_number);
-    setEditDriverName(route.driver_name);
+    setEditDriverName(route.driver_name || '');
   };
 
   const handleSaveEdit = async (routeId) => {
@@ -481,6 +481,19 @@ function AdminView({ routes, fetchRoutes }) {
     } else {
       alert(error.message);
     }
+  };
+
+  const handleMoveStop = async (index, direction) => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= stops.length) return;
+
+    const currentStop = stops[index];
+    const targetStop = stops[targetIndex];
+
+    await supabase.from('stops').update({ stop_order: targetStop.stop_order }).eq('id', currentStop.id);
+    await supabase.from('stops').update({ stop_order: currentStop.stop_order }).eq('id', targetStop.id);
+
+    fetchStops(selectedAdminRoute);
   };
 
   const handleDeleteStop = async (stopId) => {
@@ -561,7 +574,7 @@ function AdminView({ routes, fetchRoutes }) {
               ) : (
                 <>
                   <div>
-                    <strong>{route.route_name}</strong> ({route.bus_number}) - Driver: {route.driver_name}
+                    <strong>{route.route_name}</strong> ({route.bus_number}) - Driver: {route.driver_name || 'N/A'}
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button onClick={() => handleStartEdit(route)} style={styles.editBtn}>
@@ -615,16 +628,28 @@ function AdminView({ routes, fetchRoutes }) {
           </button>
         </form>
 
-        <h4 style={{ marginTop: '20px' }}>Current Stops</h4>
+        <h4 style={{ marginTop: '20px' }}>Current Stops Sequence</h4>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {stops.map((stop, index) => (
             <div key={stop.id} style={styles.stopRow}>
               <span>
                 {index + 1}. <strong>{stop.stop_name}</strong> ({stop.eta_to_next_stop_mins || stop.eta_mins || 5} mins to next)
               </span>
-              <button onClick={() => handleDeleteStop(stop.id)} style={styles.deleteBtnSmall}>
-                Remove
-              </button>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {index > 0 && (
+                  <button onClick={() => handleMoveStop(index, 'up')} style={styles.editBtn}>
+                    ⬆️
+                  </button>
+                )}
+                {index < stops.length - 1 && (
+                  <button onClick={() => handleMoveStop(index, 'down')} style={styles.editBtn}>
+                    ⬇️
+                  </button>
+                )}
+                <button onClick={() => handleDeleteStop(stop.id)} style={styles.deleteBtnSmall}>
+                  Remove
+                </button>
+              </div>
             </div>
           ))}
         </div>
