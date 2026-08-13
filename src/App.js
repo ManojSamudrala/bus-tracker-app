@@ -173,7 +173,7 @@ export default function App() {
         )}
 
         {activeTab === 'admin' && session && (
-          <AdminView routes={routes} fetchRoutes={fetchRoutes} />
+          <AdminView routes={routes} fetchRoutes={fetchRoutes} fetchTripStatus={fetchTripStatus} selectedRoute={selectedRoute} />
         )}
       </main>
 
@@ -262,7 +262,7 @@ function StudentView({ routes, selectedRoute, setSelectedRoute, tripData, loadin
         ) : tripData?.status === 'in_transit' && currentStop ? (
           <p>
             🚍 Bus is approaching <strong>{currentStop.stop_name}</strong> in approximately{' '}
-            <strong>{currentStop.eta_to_next_stop_mins || currentStop.eta_mins || 5} mins</strong>.
+            <strong>{currentStop.eta_to_next_stop_mins || 5} mins</strong>.
           </p>
         ) : tripData?.status === 'completed' ? (
           <p>✅ Bus has completed its trip for today.</p>
@@ -287,7 +287,7 @@ function StudentView({ routes, selectedRoute, setSelectedRoute, tripData, loadin
   );
 }
 
-// Sub-Component: Driver View
+// Sub-Component: Driver View (Full Stop List with Mark as Reached)
 function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTripStatus }) {
   const [stops, setStops] = useState([]);
 
@@ -309,25 +309,24 @@ function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTr
       status: 'in_transit',
       current_stop_id: stops[0].id,
       updated_at: new Date(),
-    });
+    }, { onConflict: 'route_id' });
     fetchTripStatus(selectedRoute);
   };
 
-  const handleNextStop = async () => {
-    if (!tripData || !stops.length) return;
-    const currentIndex = stops.findIndex((s) => s.id === tripData.current_stop_id);
-    if (currentIndex < stops.length - 1) {
-      const nextStop = stops[currentIndex + 1];
-      await supabase.from('active_trips').update({
-        current_stop_id: nextStop.id,
-        updated_at: new Date(),
-      }).eq('route_id', selectedRoute);
-    } else {
-      await supabase.from('active_trips').update({
-        status: 'completed',
-        updated_at: new Date(),
-      }).eq('route_id', selectedRoute);
-    }
+  const handleMarkReached = async (stopId) => {
+    await supabase.from('active_trips').update({
+      status: 'in_transit',
+      current_stop_id: stopId,
+      updated_at: new Date(),
+    }).eq('route_id', selectedRoute);
+    fetchTripStatus(selectedRoute);
+  };
+
+  const handleCompleteTrip = async () => {
+    await supabase.from('active_trips').update({
+      status: 'completed',
+      updated_at: new Date(),
+    }).eq('route_id', selectedRoute);
     fetchTripStatus(selectedRoute);
   };
 
@@ -346,23 +345,51 @@ function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTr
         ))}
       </select>
 
-      <div style={{ marginTop: '20px' }}>
-        {tripData?.status !== 'in_transit' ? (
+      <div style={{ marginTop: '15px', display: 'flex', gap: '10px' }}>
+        {(!tripData || tripData.status !== 'in_transit') ? (
           <button style={styles.primaryBtn} onClick={handleStartTrip}>
             ▶️ Start Route Trip
           </button>
         ) : (
-          <button style={styles.actionBtn} onClick={handleNextStop}>
-            ➡️ Arrived at Next Stop
+          <button style={styles.deleteBtn} onClick={handleCompleteTrip}>
+            🏁 End / Complete Trip
           </button>
         )}
+      </div>
+
+      <h4 style={{ marginTop: '25px' }}>Route Stops (Click when arrived)</h4>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
+        {stops.map((stop, index) => {
+          const isCurrent = tripData?.current_stop_id === stop.id;
+          return (
+            <div
+              key={stop.id}
+              style={{
+                ...styles.stopRow,
+                border: isCurrent ? '2px solid #0066cc' : '1px solid #eee',
+                background: isCurrent ? '#f0f7ff' : '#f9f9f9',
+              }}
+            >
+              <div>
+                <strong>{index + 1}. {stop.stop_name}</strong>
+                {isCurrent && <span style={styles.badge}>Current Target</span>}
+              </div>
+              <button
+                onClick={() => handleMarkReached(stop.id)}
+                style={isCurrent ? styles.actionBtnActive : styles.actionBtn}
+              >
+                Mark as Reached
+              </button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-// Sub-Component: Admin View with Manual Stop Number Assignment
-function AdminView({ routes, fetchRoutes }) {
+// Sub-Component: Admin View with Manual Stop Number Assignment and Trip Reset Control
+function AdminView({ routes, fetchRoutes, fetchTripStatus, selectedRoute }) {
   const [routeName, setRouteName] = useState('');
   const [busNumber, setBusNumber] = useState('');
   const [driverName, setDriverName] = useState('');
@@ -461,6 +488,22 @@ function AdminView({ routes, fetchRoutes }) {
     }
   };
 
+  // Admin Trip Reset Handler
+  const handleResetTrip = async (routeId) => {
+    if (!window.confirm('Are you sure you want to reset the trip for this route? This will clear out the completed status and allow the driver to start fresh.')) return;
+    
+    const { error } = await supabase.from('active_trips').delete().eq('route_id', routeId);
+    
+    if (!error) {
+      alert('Trip reset successfully! The driver can now start this route fresh.');
+      if (selectedRoute === routeId) {
+        fetchTripStatus(routeId);
+      }
+    } else {
+      alert(error.message);
+    }
+  };
+
   const handleAddStop = async (e) => {
     e.preventDefault();
     if (!selectedAdminRoute) return;
@@ -531,9 +574,9 @@ function AdminView({ routes, fetchRoutes }) {
         </form>
       </div>
 
-      {/* Existing Routes List (Edit & Delete) */}
+      {/* Existing Routes List (Edit, Reset Trip & Delete) */}
       <div style={styles.card}>
-        <h3>Manage Existing Routes</h3>
+        <h3>Manage Existing Routes & Trips</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
           {routes.map((route) => (
             <div key={route.id} style={styles.routeRow}>
@@ -567,6 +610,9 @@ function AdminView({ routes, fetchRoutes }) {
                     <strong>{route.route_name}</strong> ({route.bus_number}) - Driver: {route.driver_name || 'N/A'}
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
+                    <button onClick={() => handleResetTrip(route.id)} style={styles.resetBtn}>
+                      🔄 Reset Trip
+                    </button>
                     <button onClick={() => handleStartEdit(route)} style={styles.editBtn}>
                       ✏️ Edit
                     </button>
@@ -632,7 +678,7 @@ function AdminView({ routes, fetchRoutes }) {
           {stops.map((stop, index) => (
             <div key={stop.id} style={styles.stopRow}>
               <span>
-                {index + 1}. <strong>{stop.stop_name}</strong> (Stop Order Value: {stop.stop_order}, {stop.eta_to_next_stop_mins || 5} mins)
+                {index + 1}. <strong>{stop.stop_name}</strong> (Stop No: {stop.stop_order + 1}, {stop.eta_to_next_stop_mins || 5} mins)
               </span>
               <button onClick={() => handleDeleteStop(stop.id)} style={styles.deleteBtnSmall}>
                 Remove
@@ -725,12 +771,33 @@ const styles = {
     fontWeight: 'bold',
   },
   actionBtn: {
-    padding: '10px 16px',
-    borderRadius: '6px',
+    padding: '6px 12px',
+    borderRadius: '4px',
+    border: '1px solid #ccc',
+    background: '#fff',
+    color: '#333',
+    cursor: 'pointer',
+    fontSize: '12px',
+    fontWeight: 'bold',
+  },
+  actionBtnActive: {
+    padding: '6px 12px',
+    borderRadius: '4px',
     border: 'none',
     background: '#28a745',
     color: '#fff',
     cursor: 'pointer',
+    fontSize: '12px',
+    fontWeight: 'bold',
+  },
+  resetBtn: {
+    padding: '6px 10px',
+    borderRadius: '4px',
+    border: 'none',
+    background: '#ffc107',
+    color: '#000',
+    cursor: 'pointer',
+    fontSize: '12px',
     fontWeight: 'bold',
   },
   editBtn: {
@@ -751,13 +818,14 @@ const styles = {
     fontSize: '12px',
   },
   deleteBtn: {
-    padding: '6px 10px',
-    borderRadius: '4px',
+    padding: '10px 16px',
+    borderRadius: '6px',
     border: 'none',
     background: '#ff4d4f',
     color: '#fff',
     cursor: 'pointer',
-    fontSize: '12px',
+    fontWeight: 'bold',
+    fontSize: '14px',
   },
   deleteBtnSmall: {
     padding: '4px 8px',
@@ -789,10 +857,18 @@ const styles = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: '8px 12px',
-    border: '1px solid #eee',
-    borderRadius: '4px',
+    padding: '12px',
+    borderRadius: '6px',
     background: '#f9f9f9',
+  },
+  badge: {
+    marginLeft: '10px',
+    padding: '2px 8px',
+    background: '#0066cc',
+    color: '#fff',
+    borderRadius: '10px',
+    fontSize: '11px',
+    fontWeight: 'bold',
   },
   modalOverlay: {
     position: 'fixed',
