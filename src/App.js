@@ -173,7 +173,7 @@ export default function App() {
         )}
 
         {activeTab === 'admin' && session && (
-          <AdminView fetchRoutes={fetchRoutes} />
+          <AdminView routes={routes} fetchRoutes={fetchRoutes} />
         )}
       </main>
 
@@ -361,11 +361,44 @@ function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTr
   );
 }
 
-// Sub-Component: Admin View
-function AdminView({ fetchRoutes }) {
+// Sub-Component: Full Admin View with Edit, Delete, and Stop Management
+function AdminView({ routes, fetchRoutes }) {
   const [routeName, setRouteName] = useState('');
   const [busNumber, setBusNumber] = useState('');
   const [driverName, setDriverName] = useState('');
+
+  // Editing route state
+  const [editingRouteId, setEditingRouteId] = useState(null);
+  const [editRouteName, setEditRouteName] = useState('');
+  const [editBusNumber, setEditBusNumber] = useState('');
+  const [editDriverName, setEditDriverName] = useState('');
+
+  // Stops management state
+  const [selectedAdminRoute, setSelectedAdminRoute] = useState('');
+  const [stops, setStops] = useState([]);
+  const [newStopName, setNewStopName] = useState('');
+  const [newEta, setNewEta] = useState(5);
+
+  useEffect(() => {
+    if (routes.length > 0 && !selectedAdminRoute) {
+      setSelectedAdminRoute(routes[0].id);
+    }
+  }, [routes, selectedAdminRoute]);
+
+  useEffect(() => {
+    if (selectedAdminRoute) {
+      fetchStops(selectedAdminRoute);
+    }
+  }, [selectedAdminRoute]);
+
+  const fetchStops = async (routeId) => {
+    const { data } = await supabase
+      .from('route_stops')
+      .select('*')
+      .eq('route_id', routeId)
+      .order('stop_order', { ascending: true });
+    setStops(data || []);
+  };
 
   const handleCreateRoute = async (e) => {
     e.preventDefault();
@@ -388,38 +421,214 @@ function AdminView({ fetchRoutes }) {
     }
   };
 
+  const handleStartEdit = (route) => {
+    setEditingRouteId(route.id);
+    setEditRouteName(route.route_name);
+    setEditBusNumber(route.bus_number);
+    setEditDriverName(route.driver_name);
+  };
+
+  const handleSaveEdit = async (routeId) => {
+    const { error } = await supabase
+      .from('routes')
+      .update({
+        route_name: editRouteName,
+        bus_number: editBusNumber,
+        driver_name: editDriverName,
+      })
+      .eq('id', routeId);
+
+    if (!error) {
+      setEditingRouteId(null);
+      fetchRoutes();
+    } else {
+      alert(error.message);
+    }
+  };
+
+  const handleDeleteRoute = async (routeId) => {
+    if (!window.confirm('Are you sure you want to delete this route? All related stops will be deleted.')) return;
+
+    await supabase.from('route_stops').delete().eq('route_id', routeId);
+    await supabase.from('trips').delete().eq('route_id', routeId);
+    const { error } = await supabase.from('routes').delete().eq('id', routeId);
+
+    if (!error) {
+      fetchRoutes();
+    } else {
+      alert(error.message);
+    }
+  };
+
+  const handleAddStop = async (e) => {
+    e.preventDefault();
+    if (!selectedAdminRoute) return;
+
+    const nextOrder = stops.length;
+    const { error } = await supabase.from('route_stops').insert([
+      {
+        route_id: selectedAdminRoute,
+        stop_name: newStopName,
+        stop_order: nextOrder,
+        eta_to_next_stop_mins: parseInt(newEta, 10) || 5,
+      },
+    ]);
+
+    if (!error) {
+      setNewStopName('');
+      setNewEta(5);
+      fetchStops(selectedAdminRoute);
+    } else {
+      alert(error.message);
+    }
+  };
+
+  const handleDeleteStop = async (stopId) => {
+    const { error } = await supabase.from('route_stops').delete().eq('id', stopId);
+    if (!error) {
+      fetchStops(selectedAdminRoute);
+    } else {
+      alert(error.message);
+    }
+  };
+
   return (
-    <div style={styles.card}>
-      <h3>Admin Panel - Add Route</h3>
-      <form onSubmit={handleCreateRoute} style={styles.form}>
-        <input
-          type="text"
-          placeholder="Route Name (e.g. Route 3 - South Express)"
-          value={routeName}
-          onChange={(e) => setRouteName(e.target.value)}
-          required
-          style={styles.input}
-        />
-        <input
-          type="text"
-          placeholder="Bus Number (e.g. BUS-103)"
-          value={busNumber}
-          onChange={(e) => setBusNumber(e.target.value)}
-          required
-          style={styles.input}
-        />
-        <input
-          type="text"
-          placeholder="Driver Name"
-          value={driverName}
-          onChange={(e) => setDriverName(e.target.value)}
-          required
-          style={styles.input}
-        />
-        <button type="submit" style={styles.primaryBtn}>
-          + Create Route
-        </button>
-      </form>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      {/* Create Route Card */}
+      <div style={styles.card}>
+        <h3>+ Create New Route</h3>
+        <form onSubmit={handleCreateRoute} style={styles.form}>
+          <input
+            type="text"
+            placeholder="Route Name (e.g. Route 3 - South Express)"
+            value={routeName}
+            onChange={(e) => setRouteName(e.target.value)}
+            required
+            style={styles.input}
+          />
+          <input
+            type="text"
+            placeholder="Bus Number (e.g. BUS-103)"
+            value={busNumber}
+            onChange={(e) => setBusNumber(e.target.value)}
+            required
+            style={styles.input}
+          />
+          <input
+            type="text"
+            placeholder="Driver Name"
+            value={driverName}
+            onChange={(e) => setDriverName(e.target.value)}
+            required
+            style={styles.input}
+          />
+          <button type="submit" style={styles.primaryBtn}>
+            + Add Route
+          </button>
+        </form>
+      </div>
+
+      {/* Existing Routes List (Edit & Delete) */}
+      <div style={styles.card}>
+        <h3>Manage Existing Routes</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
+          {routes.map((route) => (
+            <div key={route.id} style={styles.routeRow}>
+              {editingRouteId === route.id ? (
+                <div style={{ display: 'flex', gap: '10px', flex: 1, flexWrap: 'wrap' }}>
+                  <input
+                    value={editRouteName}
+                    onChange={(e) => setEditRouteName(e.target.value)}
+                    style={styles.inputSmall}
+                  />
+                  <input
+                    value={editBusNumber}
+                    onChange={(e) => setEditBusNumber(e.target.value)}
+                    style={styles.inputSmall}
+                  />
+                  <input
+                    value={editDriverName}
+                    onChange={(e) => setEditDriverName(e.target.value)}
+                    style={styles.inputSmall}
+                  />
+                  <button onClick={() => handleSaveEdit(route.id)} style={styles.saveBtn}>
+                    Save
+                  </button>
+                  <button onClick={() => setEditingRouteId(null)} style={styles.cancelBtnSmall}>
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <strong>{route.route_name}</strong> ({route.bus_number}) - Driver: {route.driver_name}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button onClick={() => handleStartEdit(route)} style={styles.editBtn}>
+                      ✏️ Edit
+                    </button>
+                    <button onClick={() => handleDeleteRoute(route.id)} style={styles.deleteBtn}>
+                      🗑️ Delete
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Stops Management Card */}
+      <div style={styles.card}>
+        <h3>Manage Route Stops</h3>
+        <select
+          value={selectedAdminRoute}
+          onChange={(e) => setSelectedAdminRoute(e.target.value)}
+          style={styles.select}
+        >
+          {routes.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.route_name}
+            </option>
+          ))}
+        </select>
+
+        <form onSubmit={handleAddStop} style={{ ...styles.form, flexDirection: 'row', marginTop: '15px' }}>
+          <input
+            type="text"
+            placeholder="Stop Name (e.g. Oak Street)"
+            value={newStopName}
+            onChange={(e) => setNewStopName(e.target.value)}
+            required
+            style={{ ...styles.input, flex: 2 }}
+          />
+          <input
+            type="number"
+            placeholder="ETA Mins"
+            value={newEta}
+            onChange={(e) => setNewEta(e.target.value)}
+            required
+            style={{ ...styles.input, flex: 1 }}
+          />
+          <button type="submit" style={styles.primaryBtn}>
+            + Add Stop
+          </button>
+        </form>
+
+        <h4 style={{ marginTop: '20px' }}>Current Stops</h4>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {stops.map((stop, index) => (
+            <div key={stop.id} style={styles.stopRow}>
+              <span>
+                {index + 1}. <strong>{stop.stop_name}</strong> ({stop.eta_to_next_stop_mins} mins to next)
+              </span>
+              <button onClick={() => handleDeleteStop(stop.id)} style={styles.deleteBtnSmall}>
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -493,6 +702,7 @@ const styles = {
   dotActive: { width: '12px', height: '12px', borderRadius: '50%', background: '#28a745' },
   form: { display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' },
   input: { padding: '10px', borderRadius: '6px', border: '1px solid #ccc' },
+  inputSmall: { padding: '6px 10px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '13px' },
   primaryBtn: {
     padding: '10px',
     borderRadius: '6px',
@@ -510,6 +720,67 @@ const styles = {
     color: '#fff',
     cursor: 'pointer',
     fontWeight: 'bold',
+  },
+  editBtn: {
+    padding: '6px 10px',
+    borderRadius: '4px',
+    border: '1px solid #ccc',
+    background: '#f0f0f0',
+    cursor: 'pointer',
+    fontSize: '12px',
+  },
+  saveBtn: {
+    padding: '6px 10px',
+    borderRadius: '4px',
+    border: 'none',
+    background: '#28a745',
+    color: '#fff',
+    cursor: 'pointer',
+    fontSize: '12px',
+  },
+  deleteBtn: {
+    padding: '6px 10px',
+    borderRadius: '4px',
+    border: 'none',
+    background: '#ff4d4f',
+    color: '#fff',
+    cursor: 'pointer',
+    fontSize: '12px',
+  },
+  deleteBtnSmall: {
+    padding: '4px 8px',
+    borderRadius: '4px',
+    border: 'none',
+    background: '#ff4d4f',
+    color: '#fff',
+    cursor: 'pointer',
+    fontSize: '11px',
+  },
+  cancelBtnSmall: {
+    padding: '6px 10px',
+    borderRadius: '4px',
+    border: '1px solid #ccc',
+    background: '#fff',
+    cursor: 'pointer',
+    fontSize: '12px',
+  },
+  routeRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '10px',
+    border: '1px solid #eee',
+    borderRadius: '6px',
+    background: '#fafafa',
+  },
+  stopRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '8px 12px',
+    border: '1px solid #eee',
+    borderRadius: '4px',
+    background: '#f9f9f9',
   },
   modalOverlay: {
     position: 'fixed',
