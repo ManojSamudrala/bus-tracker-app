@@ -483,18 +483,27 @@ function AdminView({ routes, fetchRoutes }) {
     }
   };
 
-  const handleMoveStop = async (index, direction) => {
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= stops.length) return;
+const handleMoveStop = async (index, direction) => {
+  const targetIndex = direction === 'up' ? index - 1 : index + 1;
+  if (targetIndex < 0 || targetIndex >= stops.length) return;
 
-    const currentStop = stops[index];
-    const targetStop = stops[targetIndex];
+  // Create a copy of current stops array and swap adjacent elements locally
+  const updatedStops = [...stops];
+  const temp = updatedStops[index];
+  updatedStops[index] = updatedStops[targetIndex];
+  updatedStops[targetIndex] = temp;
 
-    await supabase.from('stops').update({ stop_order: targetStop.stop_order }).eq('id', currentStop.id);
-    await supabase.from('stops').update({ stop_order: currentStop.stop_order }).eq('id', targetStop.id);
+  // Update stop_order in Supabase based on the new array index sequence (0, 1, 2, 3...)
+  const updatePromises = updatedStops.map((stop, i) =>
+    supabase
+      .from('stops')
+      .update({ stop_order: i })
+      .eq('id', stop.id)
+  );
 
-    fetchStops(selectedAdminRoute);
-  };
+  await Promise.all(updatePromises);
+  fetchStops(selectedAdminRoute);
+};
 
   const handleDeleteStop = async (stopId) => {
     const { error } = await supabase.from('stops').delete().eq('id', stopId);
