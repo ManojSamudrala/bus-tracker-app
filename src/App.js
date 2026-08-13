@@ -361,7 +361,7 @@ function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTr
   );
 }
 
-// Sub-Component: Full Admin View with Edit, Delete, and Re-ordering Stops
+// Sub-Component: Admin View with Manual Stop Number Assignment
 function AdminView({ routes, fetchRoutes }) {
   const [routeName, setRouteName] = useState('');
   const [busNumber, setBusNumber] = useState('');
@@ -377,6 +377,7 @@ function AdminView({ routes, fetchRoutes }) {
   const [selectedAdminRoute, setSelectedAdminRoute] = useState('');
   const [stops, setStops] = useState([]);
   const [newStopName, setNewStopName] = useState('');
+  const [stopNumberInput, setStopNumberInput] = useState('');
   const [newEta, setNewEta] = useState(5);
 
   useEffect(() => {
@@ -464,46 +465,26 @@ function AdminView({ routes, fetchRoutes }) {
     e.preventDefault();
     if (!selectedAdminRoute) return;
 
-    const nextOrder = stops.length;
+    const assignedOrder = stopNumberInput !== '' ? parseInt(stopNumberInput, 10) - 1 : stops.length;
+
     const { error } = await supabase.from('stops').insert([
       {
         route_id: selectedAdminRoute,
         stop_name: newStopName,
-        stop_order: nextOrder,
+        stop_order: isNaN(assignedOrder) ? stops.length : assignedOrder,
         eta_to_next_stop_mins: parseInt(newEta, 10) || 5,
       },
     ]);
 
     if (!error) {
       setNewStopName('');
+      setStopNumberInput('');
       setNewEta(5);
       fetchStops(selectedAdminRoute);
     } else {
       alert(error.message);
     }
   };
-
-const handleMoveStop = async (index, direction) => {
-  const targetIndex = direction === 'up' ? index - 1 : index + 1;
-  if (targetIndex < 0 || targetIndex >= stops.length) return;
-
-  // Create a copy of current stops array and swap adjacent elements locally
-  const updatedStops = [...stops];
-  const temp = updatedStops[index];
-  updatedStops[index] = updatedStops[targetIndex];
-  updatedStops[targetIndex] = temp;
-
-  // Update stop_order in Supabase based on the new array index sequence (0, 1, 2, 3...)
-  const updatePromises = updatedStops.map((stop, i) =>
-    supabase
-      .from('stops')
-      .update({ stop_order: i })
-      .eq('id', stop.id)
-  );
-
-  await Promise.all(updatePromises);
-  fetchStops(selectedAdminRoute);
-};
 
   const handleDeleteStop = async (stopId) => {
     const { error } = await supabase.from('stops').delete().eq('id', stopId);
@@ -615,23 +596,32 @@ const handleMoveStop = async (index, direction) => {
           ))}
         </select>
 
-        <form onSubmit={handleAddStop} style={{ ...styles.form, flexDirection: 'row', marginTop: '15px' }}>
-          <input
-            type="text"
-            placeholder="Stop Name (e.g. Oak Street)"
-            value={newStopName}
-            onChange={(e) => setNewStopName(e.target.value)}
-            required
-            style={{ ...styles.input, flex: 2 }}
-          />
-          <input
-            type="number"
-            placeholder="ETA Mins"
-            value={newEta}
-            onChange={(e) => setNewEta(e.target.value)}
-            required
-            style={{ ...styles.input, flex: 1 }}
-          />
+        <form onSubmit={handleAddStop} style={{ ...styles.form, flexDirection: 'column', marginTop: '15px' }}>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <input
+              type="text"
+              placeholder="Stop Name (e.g. Oak Street)"
+              value={newStopName}
+              onChange={(e) => setNewStopName(e.target.value)}
+              required
+              style={{ ...styles.input, flex: 2 }}
+            />
+            <input
+              type="number"
+              placeholder="Stop No. (e.g. 1, 2, 3)"
+              value={stopNumberInput}
+              onChange={(e) => setStopNumberInput(e.target.value)}
+              style={{ ...styles.input, flex: 1 }}
+            />
+            <input
+              type="number"
+              placeholder="ETA Mins"
+              value={newEta}
+              onChange={(e) => setNewEta(e.target.value)}
+              required
+              style={{ ...styles.input, flex: 1 }}
+            />
+          </div>
           <button type="submit" style={styles.primaryBtn}>
             + Add Stop
           </button>
@@ -642,23 +632,11 @@ const handleMoveStop = async (index, direction) => {
           {stops.map((stop, index) => (
             <div key={stop.id} style={styles.stopRow}>
               <span>
-                {index + 1}. <strong>{stop.stop_name}</strong> ({stop.eta_to_next_stop_mins || stop.eta_mins || 5} mins to next)
+                {index + 1}. <strong>{stop.stop_name}</strong> (Stop Order Value: {stop.stop_order}, {stop.eta_to_next_stop_mins || 5} mins)
               </span>
-              <div style={{ display: 'flex', gap: '6px' }}>
-                {index > 0 && (
-                  <button onClick={() => handleMoveStop(index, 'up')} style={styles.editBtn}>
-                    ⬆️
-                  </button>
-                )}
-                {index < stops.length - 1 && (
-                  <button onClick={() => handleMoveStop(index, 'down')} style={styles.editBtn}>
-                    ⬇️
-                  </button>
-                )}
-                <button onClick={() => handleDeleteStop(stop.id)} style={styles.deleteBtnSmall}>
-                  Remove
-                </button>
-              </div>
+              <button onClick={() => handleDeleteStop(stop.id)} style={styles.deleteBtnSmall}>
+                Remove
+              </button>
             </div>
           ))}
         </div>
