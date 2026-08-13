@@ -57,7 +57,7 @@ export default function App() {
         {
           event: '*',
           schema: 'public',
-          table: 'trips',
+          table: 'active_trips',
           filter: `route_id=eq.${selectedRoute}`,
         },
         (payload) => {
@@ -74,7 +74,7 @@ export default function App() {
   const fetchTripStatus = async (routeId) => {
     setLoading(true);
     const { data } = await supabase
-      .from('trips')
+      .from('active_trips')
       .select('*')
       .eq('route_id', routeId)
       .single();
@@ -230,7 +230,7 @@ function StudentView({ routes, selectedRoute, setSelectedRoute, tripData, loadin
   useEffect(() => {
     if (selectedRoute) {
       supabase
-        .from('route_stops')
+        .from('stops')
         .select('*')
         .eq('route_id', selectedRoute)
         .order('stop_order', { ascending: true })
@@ -262,7 +262,7 @@ function StudentView({ routes, selectedRoute, setSelectedRoute, tripData, loadin
         ) : tripData?.status === 'in_transit' && currentStop ? (
           <p>
             🚍 Bus is approaching <strong>{currentStop.stop_name}</strong> in approximately{' '}
-            <strong>{currentStop.eta_to_next_stop_mins} mins</strong>.
+            <strong>{currentStop.eta_to_next_stop_mins || currentStop.eta_mins || 5} mins</strong>.
           </p>
         ) : tripData?.status === 'completed' ? (
           <p>✅ Bus has completed its trip for today.</p>
@@ -294,7 +294,7 @@ function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTr
   useEffect(() => {
     if (selectedRoute) {
       supabase
-        .from('route_stops')
+        .from('stops')
         .select('*')
         .eq('route_id', selectedRoute)
         .order('stop_order', { ascending: true })
@@ -304,7 +304,7 @@ function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTr
 
   const handleStartTrip = async () => {
     if (!stops.length) return;
-    await supabase.from('trips').upsert({
+    await supabase.from('active_trips').upsert({
       route_id: selectedRoute,
       status: 'in_transit',
       current_stop_id: stops[0].id,
@@ -318,12 +318,12 @@ function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTr
     const currentIndex = stops.findIndex((s) => s.id === tripData.current_stop_id);
     if (currentIndex < stops.length - 1) {
       const nextStop = stops[currentIndex + 1];
-      await supabase.from('trips').update({
+      await supabase.from('active_trips').update({
         current_stop_id: nextStop.id,
         updated_at: new Date(),
       }).eq('route_id', selectedRoute);
     } else {
-      await supabase.from('trips').update({
+      await supabase.from('active_trips').update({
         status: 'completed',
         updated_at: new Date(),
       }).eq('route_id', selectedRoute);
@@ -361,7 +361,7 @@ function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTr
   );
 }
 
-// Sub-Component: Full Admin View with Edit, Delete, and Stop Management
+// Sub-Component: Full Admin View
 function AdminView({ routes, fetchRoutes }) {
   const [routeName, setRouteName] = useState('');
   const [busNumber, setBusNumber] = useState('');
@@ -393,7 +393,7 @@ function AdminView({ routes, fetchRoutes }) {
 
   const fetchStops = async (routeId) => {
     const { data } = await supabase
-      .from('route_stops')
+      .from('stops')
       .select('*')
       .eq('route_id', routeId)
       .order('stop_order', { ascending: true });
@@ -449,8 +449,8 @@ function AdminView({ routes, fetchRoutes }) {
   const handleDeleteRoute = async (routeId) => {
     if (!window.confirm('Are you sure you want to delete this route? All related stops will be deleted.')) return;
 
-    await supabase.from('route_stops').delete().eq('route_id', routeId);
-    await supabase.from('trips').delete().eq('route_id', routeId);
+    await supabase.from('stops').delete().eq('route_id', routeId);
+    await supabase.from('active_trips').delete().eq('route_id', routeId);
     const { error } = await supabase.from('routes').delete().eq('id', routeId);
 
     if (!error) {
@@ -465,7 +465,7 @@ function AdminView({ routes, fetchRoutes }) {
     if (!selectedAdminRoute) return;
 
     const nextOrder = stops.length;
-    const { error } = await supabase.from('route_stops').insert([
+    const { error } = await supabase.from('stops').insert([
       {
         route_id: selectedAdminRoute,
         stop_name: newStopName,
@@ -484,7 +484,7 @@ function AdminView({ routes, fetchRoutes }) {
   };
 
   const handleDeleteStop = async (stopId) => {
-    const { error } = await supabase.from('route_stops').delete().eq('id', stopId);
+    const { error } = await supabase.from('stops').delete().eq('id', stopId);
     if (!error) {
       fetchStops(selectedAdminRoute);
     } else {
@@ -620,7 +620,7 @@ function AdminView({ routes, fetchRoutes }) {
           {stops.map((stop, index) => (
             <div key={stop.id} style={styles.stopRow}>
               <span>
-                {index + 1}. <strong>{stop.stop_name}</strong> ({stop.eta_to_next_stop_mins} mins to next)
+                {index + 1}. <strong>{stop.stop_name}</strong> ({stop.eta_to_next_stop_mins || stop.eta_mins || 5} mins to next)
               </span>
               <button onClick={() => handleDeleteStop(stop.id)} style={styles.deleteBtnSmall}>
                 Remove
