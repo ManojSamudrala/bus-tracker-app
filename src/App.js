@@ -2,369 +2,548 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 
 export default function App() {
-  const [role, setRole] = useState('student'); // 'student', 'driver', 'admin'
+  const [activeTab, setActiveTab] = useState('student');
   const [routes, setRoutes] = useState([]);
-  const [selectedRouteId, setSelectedRouteId] = useState('');
+  const [selectedRoute, setSelectedRoute] = useState('');
+  const [tripData, setTripData] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-  const loadRoutes = async () => {
-    const { data, error } = await supabase.from('routes').select('*').order('created_at', { ascending: true });
-    if (error) console.error('Error fetching routes:', error);
-    else {
-      setRoutes(data || []);
-      if (data && data.length > 0 && !selectedRouteId) {
-        setSelectedRouteId(data[0].id);
-      } else if (data.length === 0) {
-        setSelectedRouteId('');
+  // Authentication State
+  const [session, setSession] = useState(null);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [targetTabAfterLogin, setTargetTabAfterLogin] = useState('');
+
+  // Check auth session on load
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Fetch routes on load
+  useEffect(() => {
+    fetchRoutes();
+  }, []);
+
+  const fetchRoutes = async () => {
+    const { data, error } = await supabase.from('routes').select('*');
+    if (!error && data) {
+      setRoutes(data);
+      if (data.length > 0 && !selectedRoute) {
+        setSelectedRoute(data[0].id);
       }
     }
   };
 
+  // Subscribe to trip updates
   useEffect(() => {
-    loadRoutes();
-  }, []);
+    if (!selectedRoute) return;
+
+    fetchTripStatus(selectedRoute);
+
+    const channel = supabase
+      .channel(`trip-${selectedRoute}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'trips',
+          filter: `route_id=eq.${selectedRoute}`,
+        },
+        (payload) => {
+          setTripData(payload.new);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [selectedRoute]);
+
+  const fetchTripStatus = async (routeId) => {
+    setLoading(true);
+    const { data } = await supabase
+      .from('trips')
+      .select('*')
+      .eq('route_id', routeId)
+      .single();
+
+    setTripData(data || null);
+    setLoading(false);
+  };
+
+  // Tab switching with auth protection
+  const handleTabChange = (tab) => {
+    if ((tab === 'driver' || tab === 'admin') && !session) {
+      setTargetTabAfterLogin(tab);
+      setShowLoginModal(true);
+      return;
+    }
+    setActiveTab(tab);
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    const { error } = await supabase.auth.signInWithPassword({
+      email: authEmail,
+      password: authPassword,
+    });
+
+    if (error) {
+      setAuthError(error.message);
+    } else {
+      setShowLoginModal(false);
+      setAuthEmail('');
+      setAuthPassword('');
+      if (targetTabAfterLogin) {
+        setActiveTab(targetTabAfterLogin);
+      }
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setActiveTab('student');
+  };
 
   return (
     <div style={styles.container}>
+      {/* Header Bar */}
       <header style={styles.header}>
-        <h1>🚌 School Bus Tracker</h1>
-        <div style={styles.roleToggle}>
-          <button style={role === 'student' ? styles.activeBtn : styles.btn} onClick={() => setRole('student')}>Student</button>
-          <button style={role === 'driver' ? styles.activeBtn : styles.btn} onClick={() => setRole('driver')}>Driver</button>
-          <button style={role === 'admin' ? styles.activeBtn : styles.btn} onClick={() => setRole('admin')}>Admin</button>
+        <h1 style={styles.title}>School Bus Tracker</h1>
+        <div style={styles.tabContainer}>
+          <button
+            style={activeTab === 'student' ? styles.activeTab : styles.tab}
+            onClick={() => handleTabChange('student')}
+          >
+            Student View
+          </button>
+          <button
+            style={activeTab === 'driver' ? styles.activeTab : styles.tab}
+            onClick={() => handleTabChange('driver')}
+          >
+            Driver Panel 🔒
+          </button>
+          <button
+            style={activeTab === 'admin' ? styles.activeTab : styles.tab}
+            onClick={() => handleTabChange('admin')}
+          >
+            Admin Panel 🔒
+          </button>
+          {session && (
+            <button style={styles.logoutBtn} onClick={handleLogout}>
+              Logout ({session.user.email.split('@')[0]})
+            </button>
+          )}
         </div>
       </header>
 
-      {/* Route Selector (Hidden on Admin screen to avoid confusion) */}
-      {role !== 'admin' && routes.length > 0 && (
-        <div style={styles.card}>
-          <label><strong>Select Route: </strong></label>
-          <select value={selectedRouteId} onChange={(e) => setSelectedRouteId(e.target.value)} style={styles.select}>
-            {routes.map((r) => (
-              <option key={r.id} value={r.id}>{r.route_name} ({r.bus_number})</option>
-            ))}
-          </select>
-        </div>
-      )}
+      {/* Main Views */}
+      <main style={styles.content}>
+        {activeTab === 'student' && (
+          <StudentView
+            routes={routes}
+            selectedRoute={selectedRoute}
+            setSelectedRoute={setSelectedRoute}
+            tripData={tripData}
+            loading={loading}
+          />
+        )}
 
-      {/* Render Active View */}
-      {role === 'admin' && <AdminView onRouteChanged={loadRoutes} routes={routes} />}
-      {role === 'driver' && selectedRouteId && <DriverView routeId={selectedRouteId} />}
-      {role === 'student' && selectedRouteId && <StudentView routeId={selectedRouteId} />}
-      
-      {role !== 'admin' && routes.length === 0 && (
-        <p style={{textAlign: 'center'}}>No routes available. Ask an Admin to create one.</p>
+        {activeTab === 'driver' && session && (
+          <DriverView
+            routes={routes}
+            selectedRoute={selectedRoute}
+            setSelectedRoute={setSelectedRoute}
+            tripData={tripData}
+            fetchTripStatus={fetchTripStatus}
+          />
+        )}
+
+        {activeTab === 'admin' && session && (
+          <AdminView fetchRoutes={fetchRoutes} />
+        )}
+      </main>
+
+      {/* Login Modal */}
+      {showLoginModal && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalBox}>
+            <h2 style={{ marginTop: 0 }}>Login Required</h2>
+            <p style={{ color: '#666', fontSize: '14px' }}>
+              Please enter authorized credentials to access the {targetTabAfterLogin} panel.
+            </p>
+            {authError && <div style={styles.errorBanner}>{authError}</div>}
+            <form onSubmit={handleLogin} style={styles.form}>
+              <input
+                type="email"
+                placeholder="Email (e.g. admin@school.com)"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                required
+                style={styles.input}
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                required
+                style={styles.input}
+              />
+              <div style={styles.modalActions}>
+                <button
+                  type="button"
+                  onClick={() => setShowLoginModal(false)}
+                  style={styles.cancelBtn}
+                >
+                  Cancel
+                </button>
+                <button type="submit" style={styles.primaryBtn}>
+                  Log In
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );
 }
 
-// ==========================================
-// 1. ADMIN VIEW COMPONENT
-// ==========================================
-function AdminView({ onRouteChanged, routes }) {
-  const [routeName, setRouteName] = useState('');
-  const [busNumber, setBusNumber] = useState('');
-  
-  const [targetRouteId, setTargetRouteId] = useState('');
-  const [editRouteName, setEditRouteName] = useState('');
-  const [editBusNumber, setEditBusNumber] = useState('');
-
-  const [stopName, setStopName] = useState('');
-  const [sequenceOrder, setSequenceOrder] = useState('1');
-  const [etaMins, setEtaMins] = useState('10');
-  const [routeStops, setRouteStops] = useState([]);
+// Sub-Component: Student View
+function StudentView({ routes, selectedRoute, setSelectedRoute, tripData, loading }) {
+  const [stops, setStops] = useState([]);
 
   useEffect(() => {
-    if (routes.length > 0 && !targetRouteId) {
-      setTargetRouteId(routes[0].id);
+    if (selectedRoute) {
+      supabase
+        .from('route_stops')
+        .select('*')
+        .eq('route_id', selectedRoute)
+        .order('stop_order', { ascending: true })
+        .then(({ data }) => setStops(data || []));
     }
-  }, [routes, targetRouteId]);
+  }, [selectedRoute]);
 
-  useEffect(() => {
-    if (targetRouteId) {
-      const selected = routes.find(r => r.id === targetRouteId);
-      if (selected) {
-        setEditRouteName(selected.route_name);
-        setEditBusNumber(selected.bus_number);
-      }
-      fetchStopsForAdmin(targetRouteId);
-    }
-  }, [targetRouteId, routes]);
-
-  const fetchStopsForAdmin = async (routeId) => {
-    const { data } = await supabase.from('stops').select('*').eq('route_id', routeId).order('sequence_order', { ascending: true });
-    setRouteStops(data || []);
-  };
-
-  // -- ROUTE ACTIONS --
-  const handleCreateRoute = async (e) => {
-    e.preventDefault();
-    if (!routeName || !busNumber) return alert('Enter Route Name and Bus Number.');
-    const { data: newRoute, error: routeError } = await supabase.from('routes').insert([{ route_name: routeName, bus_number: busNumber }]).select().single();
-    if (routeError) return alert('Error: ' + routeError.message);
-    await supabase.from('active_trips').insert([{ route_id: newRoute.id, status: 'not_started' }]);
-    alert('Route Created!');
-    setRouteName(''); setBusNumber('');
-    onRouteChanged();
-  };
-
-  const handleUpdateRoute = async (e) => {
-    e.preventDefault();
-    const { error } = await supabase.from('routes').update({ route_name: editRouteName, bus_number: editBusNumber }).eq('id', targetRouteId);
-    if (error) alert('Error: ' + error.message);
-    else { alert('Route Updated!'); onRouteChanged(); }
-  };
-
-  const handleDeleteRoute = async () => {
-    if (!window.confirm('WARNING: This deletes the route, all its stops, and trip history. Continue?')) return;
-    await supabase.from('routes').delete().eq('id', targetRouteId);
-    alert('Route Deleted!');
-    setTargetRouteId('');
-    onRouteChanged();
-  };
-
-  const handleResetTrip = async () => {
-    if (!window.confirm('Reset this route for a new day? (Will reset to Not Started)')) return;
-    await supabase.from('active_trips').update({ current_stop_id: null, status: 'not_started', updated_at: new Date().toISOString() }).eq('route_id', targetRouteId);
-    alert('Trip Reset for tomorrow!');
-  };
-
-  // -- STOP ACTIONS --
-  const handleAddStop = async (e) => {
-    e.preventDefault();
-    const { error } = await supabase.from('stops').insert([{ route_id: targetRouteId, stop_name: stopName, sequence_order: parseInt(sequenceOrder), eta_to_next_stop_mins: parseInt(etaMins) }]);
-    if (error) alert('Error: ' + error.message);
-    else {
-      setStopName(''); setSequenceOrder(prev => (parseInt(prev) + 1).toString());
-      fetchStopsForAdmin(targetRouteId);
-    }
-  };
-
-  const handleDeleteStop = async (stopId) => {
-    if (!window.confirm('Delete this stop?')) return;
-    await supabase.from('stops').delete().eq('id', stopId);
-    fetchStopsForAdmin(targetRouteId);
-  };
+  const currentStop = stops.find((s) => s.id === tripData?.current_stop_id);
 
   return (
-    <div>
-      {/* 1. Create New Route */}
-      <div style={styles.card}>
-        <h2>➕ Create New Route</h2>
-        <form onSubmit={handleCreateRoute} style={styles.form}>
-          <input type="text" placeholder="Route Name" value={routeName} onChange={(e) => setRouteName(e.target.value)} style={styles.input} />
-          <input type="text" placeholder="Bus Number" value={busNumber} onChange={(e) => setBusNumber(e.target.value)} style={styles.input} />
-          <button type="submit" style={styles.primaryBtn}>Create Route</button>
-        </form>
+    <div style={styles.card}>
+      <h3>Select Route</h3>
+      <select
+        value={selectedRoute}
+        onChange={(e) => setSelectedRoute(e.target.value)}
+        style={styles.select}
+      >
+        {routes.map((r) => (
+          <option key={r.id} value={r.id}>
+            {r.route_name} ({r.bus_number})
+          </option>
+        ))}
+      </select>
+
+      <div style={styles.statusBox}>
+        <h4>Live Status</h4>
+        {loading ? (
+          <p>Loading bus location...</p>
+        ) : tripData?.status === 'in_transit' && currentStop ? (
+          <p>
+            🚍 Bus is approaching <strong>{currentStop.stop_name}</strong> in approximately{' '}
+            <strong>{currentStop.eta_to_next_stop_mins} mins</strong>.
+          </p>
+        ) : tripData?.status === 'completed' ? (
+          <p>✅ Bus has completed its trip for today.</p>
+        ) : (
+          <p>⏸️ Bus has not started its route yet.</p>
+        )}
       </div>
 
-      {routes.length > 0 && (
-        <>
-          {/* Admin Target Selector */}
-          <div style={{...styles.card, backgroundColor: '#f8fafc', borderColor: '#cbd5e1'}}>
-            <label><strong>⚙️ Manage Existing Route:</strong></label>
-            <select value={targetRouteId} onChange={(e) => setTargetRouteId(e.target.value)} style={styles.select}>
-              {routes.map((r) => <option key={r.id} value={r.id}>{r.route_name}</option>)}
-            </select>
-          </div>
-
-          {/* 2. Edit / Delete Route */}
-          <div style={styles.card}>
-            <h2>✏️ Edit or Delete Route</h2>
-            <form onSubmit={handleUpdateRoute} style={styles.form}>
-              <input type="text" value={editRouteName} onChange={(e) => setEditRouteName(e.target.value)} style={styles.input} />
-              <input type="text" value={editBusNumber} onChange={(e) => setEditBusNumber(e.target.value)} style={styles.input} />
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <button type="submit" style={{ ...styles.primaryBtn, backgroundColor: '#eab308', flex: 1 }}>Save Edits</button>
-                <button type="button" onClick={handleDeleteRoute} style={{ ...styles.primaryBtn, backgroundColor: '#ef4444', flex: 1 }}>Delete Route</button>
-              </div>
-              <button type="button" onClick={handleResetTrip} style={{ ...styles.primaryBtn, backgroundColor: '#64748b', marginTop: '10px' }}>🔄 Reset Trip For Next Day</button>
-            </form>
-          </div>
-
-          {/* 3. Manage Stops */}
-          <div style={styles.card}>
-            <h2>📍 Manage Stops</h2>
-            <form onSubmit={handleAddStop} style={styles.form}>
-              <input type="text" placeholder="New Stop Name" value={stopName} onChange={(e) => setStopName(e.target.value)} style={styles.input} />
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <div style={{ flex: 1 }}><label><small>Order Number:</small></label><input type="number" value={sequenceOrder} onChange={(e) => setSequenceOrder(e.target.value)} style={styles.input} /></div>
-                <div style={{ flex: 1 }}><label><small>ETA to Next (mins):</small></label><input type="number" value={etaMins} onChange={(e) => setEtaMins(e.target.value)} style={styles.input} /></div>
-              </div>
-              <button type="submit" style={styles.primaryBtn}>Add Stop</button>
-            </form>
-
-            <div style={{ marginTop: '20px' }}>
-              {routeStops.map(stop => (
-                <div key={stop.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px', borderBottom: '1px solid #eee' }}>
-                  <span>{stop.sequence_order}. {stop.stop_name}</span>
-                  <button onClick={() => handleDeleteStop(stop.id)} style={{ color: 'red', background: 'none', border: 'none', cursor: 'pointer' }}>✖</button>
-                </div>
-              ))}
+      <h4 style={{ marginTop: '20px' }}>Route Stops Timeline</h4>
+      <div style={styles.timeline}>
+        {stops.map((stop, idx) => {
+          const isReached = idx <= (currentStop?.stop_order ?? -1);
+          return (
+            <div key={stop.id} style={styles.timelineItem}>
+              <div style={isReached ? styles.dotActive : styles.dot} />
+              <span>{stop.stop_name}</span>
             </div>
-          </div>
-        </>
-      )}
+          );
+        })}
+      </div>
     </div>
   );
 }
 
-// ==========================================
-// 2. DRIVER VIEW COMPONENT
-// ==========================================
-function DriverView({ routeId }) {
+// Sub-Component: Driver View
+function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTripStatus }) {
   const [stops, setStops] = useState([]);
-  const [tripData, setTripData] = useState(null);
 
   useEffect(() => {
-    async function loadData() {
-      const { data: sData } = await supabase.from('stops').select('*').eq('route_id', routeId).order('sequence_order', { ascending: true });
-      setStops(sData || []);
-      const { data: tData } = await supabase.from('active_trips').select('*').eq('route_id', routeId).maybeSingle();
-      setTripData(tData);
+    if (selectedRoute) {
+      supabase
+        .from('route_stops')
+        .select('*')
+        .eq('route_id', selectedRoute)
+        .order('stop_order', { ascending: true })
+        .then(({ data }) => setStops(data || []));
     }
-    loadData();
-  }, [routeId]);
+  }, [selectedRoute]);
 
-  const updateTrip = async (updates) => {
-    await supabase.from('active_trips').update({ ...updates, updated_at: new Date().toISOString() }).eq('route_id', routeId);
-    const { data: tData } = await supabase.from('active_trips').select('*').eq('route_id', routeId).maybeSingle();
-    setTripData(tData);
+  const handleStartTrip = async () => {
+    if (!stops.length) return;
+    await supabase.from('trips').upsert({
+      route_id: selectedRoute,
+      status: 'in_transit',
+      current_stop_id: stops[0].id,
+      updated_at: new Date(),
+    });
+    fetchTripStatus(selectedRoute);
   };
 
-  if (!tripData) return <p>Loading driver panel...</p>;
+  const handleNextStop = async () => {
+    if (!tripData || !stops.length) return;
+    const currentIndex = stops.findIndex((s) => s.id === tripData.current_stop_id);
+    if (currentIndex < stops.length - 1) {
+      const nextStop = stops[currentIndex + 1];
+      await supabase.from('trips').update({
+        current_stop_id: nextStop.id,
+        updated_at: new Date(),
+      }).eq('route_id', selectedRoute);
+    } else {
+      await supabase.from('trips').update({
+        status: 'completed',
+        updated_at: new Date(),
+      }).eq('route_id', selectedRoute);
+    }
+    fetchTripStatus(selectedRoute);
+  };
 
   return (
     <div style={styles.card}>
-      <h2>Driver Panel</h2>
-      
-      {tripData.status === 'not_started' && (
-        <button onClick={() => updateTrip({ status: 'in_transit' })} style={{...styles.primaryBtn, width: '100%', padding: '15px', backgroundColor: '#22c55e', fontSize: '18px'}}>
-          ▶ Start Today's Trip
+      <h3>Driver Control Panel</h3>
+      <select
+        value={selectedRoute}
+        onChange={(e) => setSelectedRoute(e.target.value)}
+        style={styles.select}
+      >
+        {routes.map((r) => (
+          <option key={r.id} value={r.id}>
+            {r.route_name} ({r.bus_number})
+          </option>
+        ))}
+      </select>
+
+      <div style={{ marginTop: '20px' }}>
+        {tripData?.status !== 'in_transit' ? (
+          <button style={styles.primaryBtn} onClick={handleStartTrip}>
+            ▶️ Start Route Trip
+          </button>
+        ) : (
+          <button style={styles.actionBtn} onClick={handleNextStop}>
+            ➡️ Arrived at Next Stop
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Sub-Component: Admin View
+function AdminView({ fetchRoutes }) {
+  const [routeName, setRouteName] = useState('');
+  const [busNumber, setBusNumber] = useState('');
+  const [driverName, setDriverName] = useState('');
+
+  const handleCreateRoute = async (e) => {
+    e.preventDefault();
+    const { error } = await supabase.from('routes').insert([
+      {
+        route_name: routeName,
+        bus_number: busNumber,
+        driver_name: driverName,
+      },
+    ]);
+
+    if (!error) {
+      setRouteName('');
+      setBusNumber('');
+      setDriverName('');
+      fetchRoutes();
+      alert('New route created successfully!');
+    } else {
+      alert(error.message);
+    }
+  };
+
+  return (
+    <div style={styles.card}>
+      <h3>Admin Panel - Add Route</h3>
+      <form onSubmit={handleCreateRoute} style={styles.form}>
+        <input
+          type="text"
+          placeholder="Route Name (e.g. Route 3 - South Express)"
+          value={routeName}
+          onChange={(e) => setRouteName(e.target.value)}
+          required
+          style={styles.input}
+        />
+        <input
+          type="text"
+          placeholder="Bus Number (e.g. BUS-103)"
+          value={busNumber}
+          onChange={(e) => setBusNumber(e.target.value)}
+          required
+          style={styles.input}
+        />
+        <input
+          type="text"
+          placeholder="Driver Name"
+          value={driverName}
+          onChange={(e) => setDriverName(e.target.value)}
+          required
+          style={styles.input}
+        />
+        <button type="submit" style={styles.primaryBtn}>
+          + Create Route
         </button>
-      )}
-
-      {tripData.status === 'completed' && (
-        <div style={{textAlign: 'center', color: '#16a34a', padding: '20px'}}>
-          <h3>✅ Trip Completed!</h3>
-          <p>Great job. See you tomorrow.</p>
-        </div>
-      )}
-
-      {tripData.status === 'in_transit' && (
-        <>
-          <p>Tap a stop below when you reach it:</p>
-          <div style={styles.stopList}>
-            {stops.map((stop, index) => {
-              const isCurrent = stop.id === tripData.current_stop_id;
-              const isLastStop = index === stops.length - 1;
-              return (
-                <div key={stop.id} style={{ ...styles.stopItem, borderColor: isCurrent ? '#22c55e' : '#ccc', backgroundColor: isCurrent ? '#f0fdf4' : '#fff' }}>
-                  <div>
-                    <strong>{stop.sequence_order}. {stop.stop_name}</strong>
-                    {isCurrent && <span style={styles.badge}>CURRENT</span>}
-                  </div>
-                  {isLastStop && isCurrent ? (
-                    <button onClick={() => updateTrip({ status: 'completed' })} style={{...styles.reachedBtn, backgroundColor: '#ef4444'}}>End Trip</button>
-                  ) : (
-                    <button onClick={() => updateTrip({ current_stop_id: stop.id })} style={isCurrent ? styles.reachedBtn : styles.markBtn}>
-                      {isCurrent ? 'Reached ✓' : 'Mark Reached'}
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
+      </form>
     </div>
   );
 }
 
-// ==========================================
-// 3. STUDENT VIEW COMPONENT (REALTIME)
-// ==========================================
-function StudentView({ routeId }) {
-  const [tripData, setTripData] = useState(null);
-  const [allStops, setAllStops] = useState([]);
-
-  const fetchTripStatus = async () => {
-    const { data: stopsData } = await supabase.from('stops').select('*').eq('route_id', routeId).order('sequence_order', { ascending: true });
-    setAllStops(stopsData || []);
-
-    const { data: activeTrip } = await supabase.from('active_trips').select('*, stops(*)').eq('route_id', routeId).maybeSingle();
-    setTripData(activeTrip);
-  };
-
-  useEffect(() => {
-    fetchTripStatus();
-    const channel = supabase.channel('realtime_bus_' + routeId)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'active_trips', filter: `route_id=eq.${routeId}` }, () => {
-        fetchTripStatus();
-      }).subscribe();
-    return () => supabase.removeChannel(channel);
-  }, [routeId]);
-
-  if (!tripData) return <p>Loading bus location...</p>;
-
-  const currentStop = tripData.stops;
-  const nextStop = allStops.find(s => currentStop && s.sequence_order === currentStop.sequence_order + 1);
-  const timeUpdated = new Date(tripData.updated_at).toLocaleTimeString();
-
-  return (
-    <div style={styles.card}>
-      <h2>Live Bus Location</h2>
-      
-      {tripData.status === 'not_started' && (
-        <div style={{...styles.statusBox, backgroundColor: '#fef3c7', color: '#b45309'}}>
-          <strong>⏳ Bus is waiting to start the route.</strong>
-        </div>
-      )}
-
-      {tripData.status === 'completed' && (
-        <div style={{...styles.statusBox, backgroundColor: '#dcfce7', color: '#16a34a'}}>
-          <strong>✅ The bus has completed its route for today.</strong>
-        </div>
-      )}
-
-      {tripData.status === 'in_transit' && currentStop && (
-        <div style={styles.statusBox}>
-          <div style={styles.statusItem}>
-            <span>📍 Currently At:</span>
-            <strong style={{ fontSize: '20px', color: '#2563eb' }}>{currentStop.stop_name}</strong>
-          </div>
-          {nextStop ? (
-            <div style={styles.statusItem}>
-              <span>➡️ Next Stop:</span>
-              <strong>{nextStop.stop_name} (Est. {currentStop.eta_to_next_stop_mins} mins)</strong>
-            </div>
-          ) : (
-            <div style={styles.statusItem}><strong>Arriving at Final Destination!</strong></div>
-          )}
-          <p style={{ fontSize: '12px', color: '#666', marginTop: '10px' }}>Last updated: {timeUpdated}</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Inline Styles
+// Component Styles
 const styles = {
-  container: { fontFamily: 'sans-serif', maxWidth: '650px', margin: '20px auto', padding: '0 15px' },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '10px' },
-  roleToggle: { display: 'flex', gap: '8px' },
-  btn: { padding: '8px 12px', border: '1px solid #ccc', borderRadius: '6px', cursor: 'pointer', background: '#f5f5f5', fontWeight: 'bold' },
-  activeBtn: { padding: '8px 12px', border: '1px solid #2563eb', borderRadius: '6px', cursor: 'pointer', background: '#2563eb', color: '#fff', fontWeight: 'bold' },
-  card: { border: '1px solid #e5e7eb', borderRadius: '8px', padding: '20px', marginBottom: '20px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', backgroundColor: '#fff' },
-  select: { padding: '10px', width: '100%', marginTop: '8px', marginBottom: '12px', borderRadius: '6px', border: '1px solid #ccc', fontSize: '16px' },
-  input: { padding: '10px', width: '100%', marginBottom: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box', fontSize: '15px' },
-  form: { display: 'flex', flexDirection: 'column', gap: '5px' },
-  primaryBtn: { backgroundColor: '#2563eb', color: '#fff', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '15px' },
-  stopList: { display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '15px' },
-  stopItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px', border: '2px solid', borderRadius: '8px' },
-  badge: { backgroundColor: '#22c55e', color: '#fff', fontSize: '11px', padding: '4px 8px', borderRadius: '12px', marginLeft: '10px', fontWeight: 'bold' },
-  markBtn: { backgroundColor: '#3b82f6', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' },
-  reachedBtn: { backgroundColor: '#16a34a', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', fontWeight: 'bold' },
-  statusBox: { backgroundColor: '#f8fafc', padding: '20px', borderRadius: '8px', marginTop: '10px', border: '1px solid #e2e8f0' },
-  statusItem: { margin: '12px 0', display: 'flex', flexDirection: 'column' }
+  container: {
+    fontFamily: 'system-ui, -apple-system, sans-serif',
+    maxWidth: '800px',
+    margin: '0 auto',
+    padding: '20px',
+  },
+  header: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '20px',
+    borderBottom: '2px solid #eee',
+    paddingBottom: '10px',
+  },
+  title: { margin: 0, fontSize: '22px', color: '#111' },
+  tabContainer: { display: 'flex', gap: '8px', alignItems: 'center' },
+  tab: {
+    padding: '8px 14px',
+    border: '1px solid #ddd',
+    borderRadius: '6px',
+    background: '#fff',
+    cursor: 'pointer',
+  },
+  activeTab: {
+    padding: '8px 14px',
+    border: '1px solid #0066cc',
+    borderRadius: '6px',
+    background: '#0066cc',
+    color: '#fff',
+    cursor: 'pointer',
+  },
+  logoutBtn: {
+    padding: '8px 12px',
+    border: '1px solid #ff4d4f',
+    background: '#fff',
+    color: '#ff4d4f',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '12px',
+  },
+  card: {
+    background: '#fff',
+    border: '1px solid #e5e5e5',
+    borderRadius: '8px',
+    padding: '20px',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+  },
+  select: {
+    width: '100%',
+    padding: '10px',
+    borderRadius: '6px',
+    border: '1px solid #ccc',
+    marginTop: '10px',
+  },
+  statusBox: {
+    background: '#f8f9fa',
+    padding: '15px',
+    borderRadius: '6px',
+    marginTop: '15px',
+    borderLeft: '4px solid #0066cc',
+  },
+  timeline: { marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '10px' },
+  timelineItem: { display: 'flex', alignItems: 'center', gap: '10px' },
+  dot: { width: '12px', height: '12px', borderRadius: '50%', background: '#ccc' },
+  dotActive: { width: '12px', height: '12px', borderRadius: '50%', background: '#28a745' },
+  form: { display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' },
+  input: { padding: '10px', borderRadius: '6px', border: '1px solid #ccc' },
+  primaryBtn: {
+    padding: '10px',
+    borderRadius: '6px',
+    border: 'none',
+    background: '#0066cc',
+    color: '#fff',
+    cursor: 'pointer',
+    fontWeight: 'bold',
+  },
+  actionBtn: {
+    padding: '10px 16px',
+    borderRadius: '6px',
+    border: 'none',
+    background: '#28a745',
+    color: '#fff',
+    cursor: 'pointer',
+    fontWeight: 'bold',
+  },
+  modalOverlay: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: 'rgba(0,0,0,0.5)',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalBox: {
+    background: '#fff',
+    padding: '25px',
+    borderRadius: '8px',
+    width: '90%',
+    maxWidth: '400px',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+  },
+  modalActions: { display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' },
+  cancelBtn: {
+    padding: '10px',
+    borderRadius: '6px',
+    border: '1px solid #ccc',
+    background: '#fff',
+    cursor: 'pointer',
+  },
+  errorBanner: {
+    padding: '8px',
+    background: '#ffe6e6',
+    color: '#cc0000',
+    borderRadius: '4px',
+    fontSize: '13px',
+    marginBottom: '10px',
+  },
 };
