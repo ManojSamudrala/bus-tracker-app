@@ -122,7 +122,7 @@ export default function App() {
     <div style={styles.container}>
       {/* Header Bar */}
       <header style={styles.header}>
-        <h1 style={styles.title}>School Bus Tracker</h1>
+        <h1 style={styles.title}>🚍 School Bus Tracker</h1>
         <div style={styles.tabContainer}>
           <button
             style={activeTab === 'student' ? styles.activeTab : styles.tab}
@@ -250,7 +250,7 @@ function StudentView({ routes, selectedRoute, setSelectedRoute, tripData, loadin
       >
         {routes.map((r) => (
           <option key={r.id} value={r.id}>
-            {r.route_name} ({r.bus_number})
+            🚍 {r.route_name} ({r.bus_number})
           </option>
         ))}
       </select>
@@ -287,7 +287,7 @@ function StudentView({ routes, selectedRoute, setSelectedRoute, tripData, loadin
   );
 }
 
-// Sub-Component: Driver View (Full Stop List with Mark as Reached)
+// Sub-Component: Driver View
 function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTripStatus }) {
   const [stops, setStops] = useState([]);
 
@@ -340,7 +340,7 @@ function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTr
       >
         {routes.map((r) => (
           <option key={r.id} value={r.id}>
-            {r.route_name} ({r.bus_number})
+            🚍 {r.route_name} ({r.bus_number})
           </option>
         ))}
       </select>
@@ -388,19 +388,17 @@ function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTr
   );
 }
 
-// Sub-Component: Admin View with Manual Stop Number Assignment and Trip Reset Control
+// Sub-Component: Admin View with Reset Trip Control
 function AdminView({ routes, fetchRoutes, fetchTripStatus, selectedRoute }) {
   const [routeName, setRouteName] = useState('');
   const [busNumber, setBusNumber] = useState('');
   const [driverName, setDriverName] = useState('');
 
-  // Editing route state
   const [editingRouteId, setEditingRouteId] = useState(null);
   const [editRouteName, setEditRouteName] = useState('');
   const [editBusNumber, setEditBusNumber] = useState('');
   const [editDriverName, setEditDriverName] = useState('');
 
-  // Stops management state
   const [selectedAdminRoute, setSelectedAdminRoute] = useState('');
   const [stops, setStops] = useState([]);
   const [newStopName, setNewStopName] = useState('');
@@ -488,7 +486,6 @@ function AdminView({ routes, fetchRoutes, fetchTripStatus, selectedRoute }) {
     }
   };
 
-  // Admin Trip Reset Handler
   const handleResetTrip = async (routeId) => {
     if (!window.confirm('Are you sure you want to reset the trip for this route? This will clear out the completed status and allow the driver to start fresh.')) return;
     
@@ -540,7 +537,6 @@ function AdminView({ routes, fetchRoutes, fetchTripStatus, selectedRoute }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-      {/* Create Route Card */}
       <div style={styles.card}>
         <h3>+ Create New Route</h3>
         <form onSubmit={handleCreateRoute} style={styles.form}>
@@ -574,7 +570,6 @@ function AdminView({ routes, fetchRoutes, fetchTripStatus, selectedRoute }) {
         </form>
       </div>
 
-      {/* Existing Routes List (Edit, Reset Trip & Delete) */}
       <div style={styles.card}>
         <h3>Manage Existing Routes & Trips</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
@@ -607,7 +602,7 @@ function AdminView({ routes, fetchRoutes, fetchTripStatus, selectedRoute }) {
               ) : (
                 <>
                   <div>
-                    <strong>{route.route_name}</strong> ({route.bus_number}) - Driver: {route.driver_name || 'N/A'}
+                    <strong>🚍 {route.route_name}</strong> ({route.bus_number}) - Driver: {route.driver_name || 'N/A'}
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button onClick={() => handleResetTrip(route.id)} style={styles.resetBtn}>
@@ -627,7 +622,6 @@ function AdminView({ routes, fetchRoutes, fetchTripStatus, selectedRoute }) {
         </div>
       </div>
 
-      {/* Stops Management Card */}
       <div style={styles.card}>
         <h3>Manage Route Stops</h3>
         <select
@@ -637,7 +631,7 @@ function AdminView({ routes, fetchRoutes, fetchTripStatus, selectedRoute }) {
         >
           {routes.map((r) => (
             <option key={r.id} value={r.id}>
-              {r.route_name}
+              🚍 {r.route_name}
             </option>
           ))}
         </select>
