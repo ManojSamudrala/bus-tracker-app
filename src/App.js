@@ -223,7 +223,7 @@ export default function App() {
   );
 }
 
-// Sub-Component: Student View
+// Sub-Component: Student View with Timestamp Display
 function StudentView({ routes, selectedRoute, setSelectedRoute, tripData, loading }) {
   const [stops, setStops] = useState([]);
 
@@ -238,7 +238,14 @@ function StudentView({ routes, selectedRoute, setSelectedRoute, tripData, loadin
     }
   }, [selectedRoute]);
 
-  const currentStop = stops.find((s) => s.id === tripData?.current_stop_id);
+  const currentIndex = stops.findIndex((s) => s.id === tripData?.current_stop_id);
+  const currentStop = currentIndex !== -1 ? stops[currentIndex] : null;
+  const nextStop = currentIndex !== -1 && currentIndex + 1 < stops.length ? stops[currentIndex + 1] : null;
+
+  // Format the ISO timestamp into a clean 12-hour local time string (e.g., "8:15 AM")
+  const formattedTime = tripData?.stop_reached_at
+    ? new Date(tripData.stop_reached_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : '';
 
   return (
     <div style={styles.card}>
@@ -260,10 +267,18 @@ function StudentView({ routes, selectedRoute, setSelectedRoute, tripData, loadin
         {loading ? (
           <p>Loading bus location...</p>
         ) : tripData?.status === 'in_transit' && currentStop ? (
-          <p>
-            🚍 Bus is approaching <strong>{currentStop.stop_name}</strong> in approximately{' '}
-            <strong>{currentStop.eta_to_next_stop_mins || 5} mins</strong>.
-          </p>
+          <div>
+            <p style={{ margin: '0 0 5px 0' }}>
+              ✅ Reached <strong>{currentStop.stop_name}</strong> {formattedTime ? `at ${formattedTime}` : ''}.
+            </p>
+            {nextStop ? (
+              <p style={{ margin: 0 }}>
+                👉 Next stop: <strong>{nextStop.stop_name}</strong> — ETA: <strong>{nextStop.eta_to_next_stop_mins || 5} mins</strong>.
+              </p>
+            ) : (
+              <p style={{ margin: 0 }}>🏁 Bus has reached the final stop of this route.</p>
+            )}
+          </div>
         ) : tripData?.status === 'completed' ? (
           <p>✅ Bus has completed its trip for today.</p>
         ) : (
@@ -271,14 +286,43 @@ function StudentView({ routes, selectedRoute, setSelectedRoute, tripData, loadin
         )}
       </div>
 
-      <h4 style={{ marginTop: '20px' }}>Route Stops Timeline</h4>
-      <div style={styles.timeline}>
+      <h4 style={{ marginTop: '20px' }}>Where is my bus? (Route Map & Live Tracking)</h4>
+      <div style={styles.timelineContainer}>
         {stops.map((stop, idx) => {
-          const isReached = idx <= (currentStop?.stop_order ?? -1);
+          const isCurrent = currentStop?.id === stop.id;
+          const isPassed = currentIndex !== -1 && idx < currentIndex;
+
           return (
-            <div key={stop.id} style={styles.timelineItem}>
-              <div style={isReached ? styles.dotActive : styles.dot} />
-              <span>{stop.stop_name}</span>
+            <div key={stop.id} style={styles.timelineStep}>
+              {idx < stops.length - 1 && (
+                <div 
+                  style={{
+                    ...styles.timelineLine, 
+                    background: idx < currentIndex ? '#28a745' : '#e5e5e5'
+                  }} 
+                />
+              )}
+              
+              <div style={styles.nodeWrapper}>
+                {isCurrent ? (
+                  <div style={styles.busNodeIndicator} title="Bus is here!">
+                    🚍
+                  </div>
+                ) : isPassed ? (
+                  <div style={styles.dotPassed} />
+                ) : (
+                  <div style={styles.dotUpcoming} />
+                )}
+              </div>
+
+              <div style={{ flex: 1, paddingBottom: '20px' }}>
+                <div style={{ fontWeight: isCurrent ? 'bold' : 'normal', color: isCurrent ? '#0066cc' : '#333' }}>
+                  {stop.stop_name} {isCurrent && <span style={styles.liveBadge}>Bus Location</span>}
+                </div>
+                <div style={{ fontSize: '12px', color: '#666' }}>
+                  Stop #{idx + 1} {isCurrent && formattedTime ? `• Reached at ${formattedTime}` : ''}
+                </div>
+              </div>
             </div>
           );
         })}
@@ -308,6 +352,7 @@ function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTr
       route_id: selectedRoute,
       status: 'in_transit',
       current_stop_id: stops[0].id,
+      stop_reached_at: new Date(),
       updated_at: new Date(),
     }, { onConflict: 'route_id' });
     fetchTripStatus(selectedRoute);
@@ -317,6 +362,7 @@ function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTr
     await supabase.from('active_trips').update({
       status: 'in_transit',
       current_stop_id: stopId,
+      stop_reached_at: new Date(),
       updated_at: new Date(),
     }).eq('route_id', selectedRoute);
     fetchTripStatus(selectedRoute);
@@ -388,7 +434,7 @@ function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTr
   );
 }
 
-// Sub-Component: Admin View with Reset Trip Control
+// Sub-Component: Admin View
 function AdminView({ routes, fetchRoutes, fetchTripStatus, selectedRoute }) {
   const [routeName, setRouteName] = useState('');
   const [busNumber, setBusNumber] = useState('');
@@ -487,12 +533,12 @@ function AdminView({ routes, fetchRoutes, fetchTripStatus, selectedRoute }) {
   };
 
   const handleResetTrip = async (routeId) => {
-    if (!window.confirm('Are you sure you want to reset the trip for this route? This will clear out the completed status and allow the driver to start fresh.')) return;
+    if (!window.confirm('Are you sure you want to reset the trip for this route?')) return;
     
     const { error } = await supabase.from('active_trips').delete().eq('route_id', routeId);
     
     if (!error) {
-      alert('Trip reset successfully! The driver can now start this route fresh.');
+      alert('Trip reset successfully!');
       if (selectedRoute === routeId) {
         fetchTripStatus(routeId);
       }
@@ -748,10 +794,69 @@ const styles = {
     marginTop: '15px',
     borderLeft: '4px solid #0066cc',
   },
-  timeline: { marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '10px' },
-  timelineItem: { display: 'flex', alignItems: 'center', gap: '10px' },
-  dot: { width: '12px', height: '12px', borderRadius: '50%', background: '#ccc' },
-  dotActive: { width: '12px', height: '12px', borderRadius: '50%', background: '#28a745' },
+  timelineContainer: {
+    marginTop: '20px',
+    position: 'relative',
+    paddingLeft: '10px',
+  },
+  timelineStep: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '15px',
+    position: 'relative',
+    minHeight: '55px',
+  },
+  timelineLine: {
+    position: 'absolute',
+    left: '11px',
+    top: '24px',
+    bottom: '-10px',
+    width: '3px',
+    zIndex: 1,
+  },
+  nodeWrapper: {
+    position: 'relative',
+    zIndex: 2,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '26px',
+    height: '26px',
+  },
+  busNodeIndicator: {
+    fontSize: '20px',
+    background: '#fff',
+    borderRadius: '50%',
+    boxShadow: '0 0 8px rgba(0,102,204,0.4)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transform: 'scale(1.2)',
+  },
+  dotPassed: {
+    width: '12px',
+    height: '12px',
+    borderRadius: '50%',
+    background: '#28a745',
+    margin: '7px',
+  },
+  dotUpcoming: {
+    width: '12px',
+    height: '12px',
+    borderRadius: '50%',
+    background: '#ccc',
+    margin: '7px',
+  },
+  liveBadge: {
+    marginLeft: '8px',
+    padding: '2px 6px',
+    background: '#e6f2ff',
+    color: '#0066cc',
+    borderRadius: '4px',
+    fontSize: '10px',
+    fontWeight: 'bold',
+    border: '1px solid #b3d1ff',
+  },
   form: { display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' },
   input: { padding: '10px', borderRadius: '6px', border: '1px solid #ccc' },
   inputSmall: { padding: '6px 10px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '13px' },
