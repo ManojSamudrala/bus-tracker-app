@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 
+// Put your actual admin email address(es) here
+const ADMIN_EMAILS = ['admin@school.com']; // Change this to your admin email
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('student');
   const [routes, setRoutes] = useState([]);
@@ -15,6 +18,10 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [targetTabAfterLogin, setTargetTabAfterLogin] = useState('');
+
+  // Helper to check if current logged-in user is an admin
+  const userEmail = session?.user?.email?.toLowerCase() || '';
+  const isAdmin = ADMIN_EMAILS.includes(userEmail);
 
   // Check auth session on load
   useEffect(() => {
@@ -83,12 +90,20 @@ export default function App() {
     setLoading(false);
   };
 
-  // Tab switching with auth protection
+  // Tab switching with strict role protection
   const handleTabChange = (tab) => {
-    if ((tab === 'driver' || tab === 'admin') && !session) {
-      setTargetTabAfterLogin(tab);
+    if (tab === 'driver' && !session) {
+      setTargetTabAfterLogin('driver');
       setShowLoginModal(true);
       return;
+    }
+    if (tab === 'admin') {
+      // If not logged in OR logged in but NOT an admin, force admin login popup
+      if (!session || !isAdmin) {
+        setTargetTabAfterLogin('admin');
+        setShowLoginModal(true);
+        return;
+      }
     }
     setActiveTab(tab);
   };
@@ -96,7 +111,7 @@ export default function App() {
   const handleLogin = async (e) => {
     e.preventDefault();
     setAuthError('');
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email: authEmail,
       password: authPassword,
     });
@@ -104,6 +119,14 @@ export default function App() {
     if (error) {
       setAuthError(error.message);
     } else {
+      // Check if they tried to access admin, but logged in with a non-admin account
+      const loggedInEmail = data.session?.user?.email?.toLowerCase() || '';
+      if (targetTabAfterLogin === 'admin' && !ADMIN_EMAILS.includes(loggedInEmail)) {
+        setAuthError('Access Denied: This account does not have Administrator privileges.');
+        await supabase.auth.signOut();
+        return;
+      }
+
       setShowLoginModal(false);
       setAuthEmail('');
       setAuthPassword('');
@@ -172,7 +195,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'admin' && session && (
+        {activeTab === 'admin' && session && isAdmin && (
           <AdminView routes={routes} fetchRoutes={fetchRoutes} fetchTripStatus={fetchTripStatus} selectedRoute={selectedRoute} session={session} />
         )}
       </main>
@@ -181,15 +204,19 @@ export default function App() {
       {showLoginModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalBox}>
-            <h2 style={{ marginTop: 0 }}>Login Required</h2>
+            <h2 style={{ marginTop: 0 }}>
+              {targetTabAfterLogin === 'admin' ? 'Admin Login Required' : 'Login Required'}
+            </h2>
             <p style={{ color: '#666', fontSize: '14px' }}>
-              Please enter authorized credentials to access the {targetTabAfterLogin} panel.
+              {targetTabAfterLogin === 'admin'
+                ? 'Please enter administrator credentials to access the Admin Panel.'
+                : 'Please enter authorized credentials to access the driver panel.'}
             </p>
             {authError && <div style={styles.errorBanner}>{authError}</div>}
             <form onSubmit={handleLogin} style={styles.form}>
               <input
                 type="email"
-                placeholder="Email (e.g. admin@school.com)"
+                placeholder="Email address"
                 value={authEmail}
                 onChange={(e) => setAuthEmail(e.target.value)}
                 required
@@ -433,7 +460,7 @@ function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTr
   );
 }
 
-// Sub-Component: Admin View (Secured)
+// Sub-Component: Admin View (Strictly Secured)
 function AdminView({ routes, fetchRoutes, fetchTripStatus, selectedRoute, session }) {
   const [routeName, setRouteName] = useState('');
   const [busNumber, setBusNumber] = useState('');
@@ -461,11 +488,6 @@ function AdminView({ routes, fetchRoutes, fetchTripStatus, selectedRoute, sessio
       fetchStops(selectedAdminRoute);
     }
   }, [selectedAdminRoute]);
-
-  // Security guard check
-  if (!session) {
-    return <div style={styles.card}><h3>Access Denied</h3><p>Please log in with admin credentials.</p></div>;
-  }
 
   const fetchStops = async (routeId) => {
     const { data } = await supabase
