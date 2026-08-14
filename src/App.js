@@ -173,7 +173,7 @@ export default function App() {
         )}
 
         {activeTab === 'admin' && session && (
-          <AdminView routes={routes} fetchRoutes={fetchRoutes} fetchTripStatus={fetchTripStatus} selectedRoute={selectedRoute} />
+          <AdminView routes={routes} fetchRoutes={fetchRoutes} fetchTripStatus={fetchTripStatus} selectedRoute={selectedRoute} session={session} />
         )}
       </main>
 
@@ -223,7 +223,7 @@ export default function App() {
   );
 }
 
-// Sub-Component: Student View with Timestamp Display
+// Sub-Component: Student View
 function StudentView({ routes, selectedRoute, setSelectedRoute, tripData, loading }) {
   const [stops, setStops] = useState([]);
 
@@ -242,7 +242,6 @@ function StudentView({ routes, selectedRoute, setSelectedRoute, tripData, loadin
   const currentStop = currentIndex !== -1 ? stops[currentIndex] : null;
   const nextStop = currentIndex !== -1 && currentIndex + 1 < stops.length ? stops[currentIndex + 1] : null;
 
-  // Format the ISO timestamp into a clean 12-hour local time string (e.g., "8:15 AM")
   const formattedTime = tripData?.stop_reached_at
     ? new Date(tripData.stop_reached_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : '';
@@ -434,8 +433,8 @@ function DriverView({ routes, selectedRoute, setSelectedRoute, tripData, fetchTr
   );
 }
 
-// Sub-Component: Admin View
-function AdminView({ routes, fetchRoutes, fetchTripStatus, selectedRoute }) {
+// Sub-Component: Admin View (Secured)
+function AdminView({ routes, fetchRoutes, fetchTripStatus, selectedRoute, session }) {
   const [routeName, setRouteName] = useState('');
   const [busNumber, setBusNumber] = useState('');
   const [driverName, setDriverName] = useState('');
@@ -462,6 +461,11 @@ function AdminView({ routes, fetchRoutes, fetchTripStatus, selectedRoute }) {
       fetchStops(selectedAdminRoute);
     }
   }, [selectedAdminRoute]);
+
+  // Security guard check
+  if (!session) {
+    return <div style={styles.card}><h3>Access Denied</h3><p>Please log in with admin credentials.</p></div>;
+  }
 
   const fetchStops = async (routeId) => {
     const { data } = await supabase
